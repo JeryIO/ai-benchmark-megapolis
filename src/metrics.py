@@ -147,6 +147,8 @@ def _normalize_task_name(name: str) -> str:
     # Убрать /think и подобные артефакты от Qwen3
     name = re.sub(r'\s*/think\s*', '', name)
     name = re.sub(r'<think>.*?</think>', '', name, flags=re.DOTALL)
+    # Убрать префикс с номером задачи (#1, #2, 1., 2. и т.д.)
+    name = re.sub(r'^#?\d+[\.\):\s]+', '', name)
     # Убрать суффикс с группой [...]
     match = re.match(r'^(.+?)\s*\[[^\]]+\]\s*$', name)
     return match.group(1).strip() if match else name.strip()
