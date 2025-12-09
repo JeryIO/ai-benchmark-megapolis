@@ -143,9 +143,40 @@ def detect_cycles(dependencies: Dict[str, List[str]]) -> List[List[str]]:
 
 
 def _normalize_task_name(name: str) -> str:
-    """Убрать суффикс с группой из названия задачи."""
+    """Нормализация названия задачи: убрать артефакты LLM."""
+    # Убрать /think и подобные артефакты от Qwen3
+    name = re.sub(r'\s*/think\s*', '', name)
+    name = re.sub(r'<think>.*?</think>', '', name, flags=re.DOTALL)
+    # Убрать суффикс с группой [...]
     match = re.match(r'^(.+?)\s*\[[^\]]+\]\s*$', name)
     return match.group(1).strip() if match else name.strip()
+
+
+def _extract_json_array(content: str) -> Optional[str]:
+    """Извлечь JSON массив из ответа LLM."""
+    # Убрать thinking блоки Qwen3
+    content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+    content = content.strip()
+
+    # Извлечь из markdown блока
+    if "```" in content:
+        match = re.search(r'```(?:json)?\s*([\s\S]*?)```', content)
+        if match:
+            content = match.group(1).strip()
+
+    # Найти JSON массив в любом месте
+    if not content.startswith("["):
+        match = re.search(r'\[[\s\S]*\]', content)
+        if match:
+            content = match.group(0)
+
+    # Восстановить обрезанный JSON
+    if content.startswith("[") and not content.endswith("]"):
+        last_brace = content.rfind("}")
+        if last_brace != -1:
+            content = content[:last_brace + 1] + "]"
+
+    return content if content else None
 
 
 def parse_llm_response(
@@ -156,23 +187,19 @@ def parse_llm_response(
     errors: List[str] = []
     dependencies: Dict[str, List[str]] = {}
 
-    content = response.strip()
+    content = _extract_json_array(response)
 
-    if "```" in content:
-        match = re.search(r'```(?:json)?\s*([\s\S]*?)```', content)
-        if match:
-            content = match.group(1).strip()
-
-    if content.startswith("[") and not content.endswith("]"):
-        last_brace = content.rfind("}")
-        if last_brace != -1:
-            content = content[:last_brace + 1] + "]"
-            errors.append("JSON обрезан, выполнено восстановление")
+    if not content:
+        errors.append(f"JSON не найден в ответе (длина: {len(response)})")
+        return dependencies, errors
 
     try:
         data = json.loads(content)
     except json.JSONDecodeError as e:
         errors.append(f"Ошибка парсинга JSON: {e}")
+        # Логируем начало ответа для отладки
+        preview = response[:200].replace('\n', ' ')
+        errors.append(f"Начало ответа: {preview}...")
         return dependencies, errors
 
     if not isinstance(data, list):
